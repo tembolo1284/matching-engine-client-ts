@@ -173,24 +173,15 @@ export function decodeWithCodec(data: Uint8Array, codec: Codec): DecodeResult {
 }
 
 function decodeBinary(data: Uint8Array): DecodeResult {
-  if (data.length < BINARY_MESSAGE_SIZE) {
+  const result = binaryDecode(data);
+
     return {
-      success: false,
-      message: null,
+      success: result.success,
+      message: result.message,
       codec: Codec.BINARY,
-      error: `Binary message too short: ${data.length} < ${BINARY_MESSAGE_SIZE}`,
+      error: result.error,
     };
   }
-
-  const result: BinaryDecodeResult = binaryDecode(data);
-
-  return {
-    success: result.success,
-    message: result.message,
-    codec: Codec.BINARY,
-    error: result.error,
-  };
-}
 
 function decodeCsv(data: Uint8Array): DecodeResult {
   // Convert bytes to string

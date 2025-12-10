@@ -1,19 +1,20 @@
 /**
- * Binary codec for low-latency message encoding/decoding.
+ * Binary codec matching Zig matching engine exactly.
  *
- * Binary format: 64-byte fixed-size messages
+ * Wire format:
+ *   Byte 0:     Magic (0x4D = 'M')
+ *   Byte 1:     Message type (ASCII char)
+ *   Byte 2+:    Payload (type-specific, BIG-ENDIAN)
  *
- * Layout:
- *   Offset  Size  Field
- *   ------  ----  -----------
- *   0       1     msg_type
- *   1       1     side
- *   2       8     symbol (null-padded)
- *   10      4     user_id
- *   14      4     user_order_id
- *   18      8     price (scaled integer)
- *   26      4     quantity
- *   30      34    _padding
+ * Message sizes:
+ *   New Order:   27 bytes
+ *   Cancel:      18 bytes
+ *   Flush:        2 bytes
+ *   Ack:         18 bytes
+ *   Cancel Ack:  18 bytes
+ *   Trade:       34 bytes
+ *   Top of Book: 20 bytes
+ *   Reject:      19 bytes
  *
  * @module protocol/binary-codec
  */
@@ -28,11 +29,7 @@ import {
   Side,
   AckStatus,
   RejectReason,
-  BINARY_MESSAGE_SIZE,
   SYMBOL_SIZE,
-  BINARY_MSG_TYPE_NEW_ORDER,
-  BINARY_MSG_TYPE_CANCEL,
-  BINARY_MSG_TYPE_FLUSH,
   isValidSymbol,
   isValidPrice,
   isValidQuantity,
@@ -42,27 +39,35 @@ import {
 } from './types.js';
 
 // ============================================================================
-// Constants
+// Protocol Constants (matching Zig)
 // ============================================================================
 
-// Field offsets
-const OFFSET_MSG_TYPE = 0;
-const OFFSET_SIDE = 1;
-const OFFSET_SYMBOL = 2;
-const OFFSET_USER_ID = 10;
-const OFFSET_USER_ORDER_ID = 14;
-const OFFSET_PRICE = 18;
-const OFFSET_QUANTITY = 26;
+const MAGIC: number = 0x4d; // 'M'
+const HEADER_SIZE: number = 2;
 
-// Output message types (from engine)
-const OUTPUT_MSG_TYPE_ACK = 0x10;
-const OUTPUT_MSG_TYPE_REJECT = 0x11;
-const OUTPUT_MSG_TYPE_TRADE = 0x12;
-const OUTPUT_MSG_TYPE_CANCEL_ACK = 0x13;
-const OUTPUT_MSG_TYPE_TOP_OF_BOOK = 0x14;
+// Message type bytes
+const MSG_NEW_ORDER: number = 0x4e; // 'N'
+const MSG_CANCEL: number = 0x43; // 'C'
+const MSG_FLUSH: number = 0x46; // 'F'
+const MSG_ACK: number = 0x41; // 'A'
+const MSG_CANCEL_ACK: number = 0x58; // 'X'
+const MSG_TRADE: number = 0x54; // 'T'
+const MSG_TOP_OF_BOOK: number = 0x42; // 'B'
+const MSG_REJECT: number = 0x52; // 'R'
 
-// Price scaling (engine uses integers, e.g., cents)
-const PRICE_SCALE = 100;
+// Wire sizes
+const NEW_ORDER_WIRE_SIZE: number = 27;
+const CANCEL_WIRE_SIZE: number = 18;
+const FLUSH_WIRE_SIZE: number = 2;
+const ACK_WIRE_SIZE: number = 18;
+const CANCEL_ACK_WIRE_SIZE: number = 18;
+const TRADE_WIRE_SIZE: number = 34;
+const TOP_OF_BOOK_WIRE_SIZE: number = 20;
+const REJECT_WIRE_SIZE: number = 19;
+
+// Side bytes
+const SIDE_BUY: number = 0x42; // 'B'
+const SIDE_SELL: number = 0x53; // 'S'
 
 // ============================================================================
 // Result Types
@@ -77,52 +82,52 @@ export interface EncodeResult {
 export interface DecodeResult {
   readonly success: boolean;
   readonly message: OutputMessage | null;
+  readonly bytesConsumed: number;
   readonly error: string | null;
 }
-
-// ============================================================================
-// Pre-allocated Buffer Pool
-// ============================================================================
-
-// Pre-allocate a buffer for encoding to avoid allocations in hot path
-const encodeBuffer = new ArrayBuffer(BINARY_MESSAGE_SIZE);
-const encodeView = new DataView(encodeBuffer);
-const encodeBytes = new Uint8Array(encodeBuffer);
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
+function writeU32Big(view: DataView, offset: number, value: number): void {
+  view.setUint32(offset, value, false); // false = big-endian
+}
+
+function readU32Big(view: DataView, offset: number): number {
+  return view.getUint32(offset, false); // false = big-endian
+}
+
 function writeSymbol(view: DataView, offset: number, symbol: string): void {
-  // Bounded loop: SYMBOL_SIZE iterations max
   for (let i = 0; i < SYMBOL_SIZE; i += 1) {
     if (i < symbol.length) {
       view.setUint8(offset + i, symbol.charCodeAt(i));
     } else {
-      view.setUint8(offset + i, 0); // Null padding
+      view.setUint8(offset + i, 0);
     }
   }
 }
 
 function readSymbol(view: DataView, offset: number): string {
   let result = '';
-  // Bounded loop: SYMBOL_SIZE iterations max
   for (let i = 0; i < SYMBOL_SIZE; i += 1) {
     const byte = view.getUint8(offset + i);
-    if (byte === 0) {
-      break;
-    }
+    if (byte === 0) break;
     result += String.fromCharCode(byte);
   }
   return result;
 }
 
-function clearBuffer(view: DataView): void {
-  // Bounded loop: BINARY_MESSAGE_SIZE / 4 iterations
-  const words = BINARY_MESSAGE_SIZE / 4;
-  for (let i = 0; i < words; i += 1) {
-    view.setUint32(i * 4, 0, true);
-  }
+function sideToWire(side: number): number {
+  if (side === Side.BUY) return SIDE_BUY;
+  if (side === Side.SELL) return SIDE_SELL;
+  return 0;
+}
+
+function wireToSide(byte: number): number | null {
+  if (byte === SIDE_BUY) return Side.BUY;
+  if (byte === SIDE_SELL) return Side.SELL;
+  return null;
 }
 
 // ============================================================================
@@ -149,24 +154,41 @@ function encodeNewOrder(msg: NewOrderInput): EncodeResult {
     return { success: false, data: new Uint8Array(0), error: 'Invalid quantity' };
   }
 
-  clearBuffer(encodeView);
+  const buffer = new ArrayBuffer(NEW_ORDER_WIRE_SIZE);
+  const view = new DataView(buffer);
+  let pos = 0;
 
-  encodeView.setUint8(OFFSET_MSG_TYPE, BINARY_MSG_TYPE_NEW_ORDER);
-  encodeView.setUint8(OFFSET_SIDE, msg.side);
-  writeSymbol(encodeView, OFFSET_SYMBOL, msg.symbol);
-  encodeView.setUint32(OFFSET_USER_ID, msg.userId, true);
-  encodeView.setUint32(OFFSET_USER_ORDER_ID, msg.userOrderId, true);
+  // Header
+  view.setUint8(pos, MAGIC);
+  pos += 1;
+  view.setUint8(pos, MSG_NEW_ORDER);
+  pos += 1;
 
-  // Scale price to integer (e.g., dollars -> cents)
-  const scaledPrice = Math.round(msg.price * PRICE_SCALE);
-  encodeView.setBigUint64(OFFSET_PRICE, BigInt(scaledPrice), true);
+  // user_id
+  writeU32Big(view, pos, msg.userId);
+  pos += 4;
 
-  encodeView.setUint32(OFFSET_QUANTITY, msg.quantity, true);
+  // symbol
+  writeSymbol(view, pos, msg.symbol);
+  pos += SYMBOL_SIZE;
 
-  // Return a copy (caller may hold reference)
-  const copy = new Uint8Array(BINARY_MESSAGE_SIZE);
-  copy.set(encodeBytes);
-  return { success: true, data: copy, error: null };
+  // price (as integer - assuming price is already scaled or we scale it)
+  writeU32Big(view, pos, Math.round(msg.price * 100));
+  pos += 4;
+
+  // quantity
+  writeU32Big(view, pos, msg.quantity);
+  pos += 4;
+
+  // side
+  view.setUint8(pos, sideToWire(msg.side));
+  pos += 1;
+
+  // user_order_id
+  writeU32Big(view, pos, msg.userOrderId);
+  pos += 4;
+
+  return { success: true, data: new Uint8Array(buffer), error: null };
 }
 
 function encodeCancel(msg: CancelInput): EncodeResult {
@@ -180,17 +202,39 @@ function encodeCancel(msg: CancelInput): EncodeResult {
     return { success: false, data: new Uint8Array(0), error: 'Invalid order ID' };
   }
 
-  clearBuffer(encodeView);
+  const buffer = new ArrayBuffer(CANCEL_WIRE_SIZE);
+  const view = new DataView(buffer);
+  let pos = 0;
 
-  encodeView.setUint8(OFFSET_MSG_TYPE, BINARY_MSG_TYPE_CANCEL);
-  encodeView.setUint8(OFFSET_SIDE, 0);
-  writeSymbol(encodeView, OFFSET_SYMBOL, msg.symbol);
-  encodeView.setUint32(OFFSET_USER_ID, msg.userId, true);
-  encodeView.setUint32(OFFSET_USER_ORDER_ID, msg.userOrderId, true);
+  // Header
+  view.setUint8(pos, MAGIC);
+  pos += 1;
+  view.setUint8(pos, MSG_CANCEL);
+  pos += 1;
 
-  const copy = new Uint8Array(BINARY_MESSAGE_SIZE);
-  copy.set(encodeBytes);
-  return { success: true, data: copy, error: null };
+  // user_id
+  writeU32Big(view, pos, msg.userId);
+  pos += 4;
+
+  // symbol
+  writeSymbol(view, pos, msg.symbol);
+  pos += SYMBOL_SIZE;
+
+  // user_order_id
+  writeU32Big(view, pos, msg.userOrderId);
+  pos += 4;
+
+  return { success: true, data: new Uint8Array(buffer), error: null };
+}
+
+function encodeFlush(): EncodeResult {
+  const buffer = new ArrayBuffer(FLUSH_WIRE_SIZE);
+  const view = new DataView(buffer);
+
+  view.setUint8(0, MAGIC);
+  view.setUint8(1, MSG_FLUSH);
+
+  return { success: true, data: new Uint8Array(buffer), error: null };
 }
 
 export function encode(msg: InputMessage): EncodeResult {
@@ -201,12 +245,7 @@ export function encode(msg: InputMessage): EncodeResult {
     return encodeCancel(msg);
   }
   if (msg.type === MessageType.FLUSH) {
-    clearBuffer(encodeView);
-    encodeView.setUint8(OFFSET_MSG_TYPE, BINARY_MSG_TYPE_FLUSH);
-    encodeView.setUint32(OFFSET_USER_ID, msg.userId, true);
-    const copy = new Uint8Array(BINARY_MESSAGE_SIZE);
-    copy.set(encodeBytes);
-    return { success: true, data: copy, error: null };
+    return encodeFlush();
   }
   return { success: false, data: new Uint8Array(0), error: 'Unknown message type' };
 }
@@ -216,13 +255,16 @@ export function encode(msg: InputMessage): EncodeResult {
 // ============================================================================
 
 function decodeAck(view: DataView): DecodeResult {
-  const symbol = readSymbol(view, OFFSET_SYMBOL);
-  if (!isValidSymbol(symbol)) {
-    return { success: false, message: null, error: 'ACK: invalid symbol' };
-  }
+  let pos = HEADER_SIZE;
 
-  const userOrderId = view.getUint32(OFFSET_USER_ORDER_ID, true);
-  const status = view.getUint8(OFFSET_SIDE); // Status stored in side field
+  const symbol = readSymbol(view, pos);
+  pos += SYMBOL_SIZE;
+
+  const userId = readU32Big(view, pos);
+  pos += 4;
+
+  const userOrderId = readU32Big(view, pos);
+  pos += 4;
 
   return {
     success: true,
@@ -230,20 +272,66 @@ function decodeAck(view: DataView): DecodeResult {
       type: OutputMessageType.ACK,
       symbol,
       userOrderId,
-      status: status as typeof AckStatus[keyof typeof AckStatus],
+      status: AckStatus.ACCEPTED,
     },
+    bytesConsumed: ACK_WIRE_SIZE,
+    error: null,
+  };
+}
+
+function decodeTrade(view: DataView): DecodeResult {
+  let pos = HEADER_SIZE;
+
+  const symbol = readSymbol(view, pos);
+  pos += SYMBOL_SIZE;
+
+  const buyUserId = readU32Big(view, pos);
+  pos += 4;
+
+  const buyOrderId = readU32Big(view, pos);
+  pos += 4;
+
+  const sellUserId = readU32Big(view, pos);
+  pos += 4;
+
+  const sellOrderId = readU32Big(view, pos);
+  pos += 4;
+
+  const priceRaw = readU32Big(view, pos);
+  pos += 4;
+
+  const quantity = readU32Big(view, pos);
+  pos += 4;
+
+  return {
+    success: true,
+    message: {
+      type: OutputMessageType.TRADE,
+      symbol,
+      price: priceRaw / 100,
+      quantity,
+      buyOrderId,
+      sellOrderId,
+    },
+    bytesConsumed: TRADE_WIRE_SIZE,
     error: null,
   };
 }
 
 function decodeReject(view: DataView): DecodeResult {
-  const symbol = readSymbol(view, OFFSET_SYMBOL);
-  if (!isValidSymbol(symbol)) {
-    return { success: false, message: null, error: 'REJECT: invalid symbol' };
-  }
+  let pos = HEADER_SIZE;
 
-  const userOrderId = view.getUint32(OFFSET_USER_ORDER_ID, true);
-  const reason = view.getUint8(OFFSET_SIDE); // Reason stored in side field
+  const symbol = readSymbol(view, pos);
+  pos += SYMBOL_SIZE;
+
+  const userId = readU32Big(view, pos);
+  pos += 4;
+
+  const userOrderId = readU32Big(view, pos);
+  pos += 4;
+
+  const reason = view.getUint8(pos);
+  pos += 1;
 
   return {
     success: true,
@@ -251,47 +339,24 @@ function decodeReject(view: DataView): DecodeResult {
       type: OutputMessageType.REJECT,
       symbol,
       userOrderId,
-      reason: reason as typeof RejectReason[keyof typeof RejectReason],
+      reason: reason as RejectReason,
     },
-    error: null,
-  };
-}
-
-function decodeTrade(view: DataView): DecodeResult {
-  const symbol = readSymbol(view, OFFSET_SYMBOL);
-  if (!isValidSymbol(symbol)) {
-    return { success: false, message: null, error: 'TRADE: invalid symbol' };
-  }
-
-  const scaledPrice = Number(view.getBigUint64(OFFSET_PRICE, true));
-  const price = scaledPrice / PRICE_SCALE;
-  const quantity = view.getUint32(OFFSET_QUANTITY, true);
-
-  // Buy/sell order IDs packed after quantity
-  const buyOrderId = view.getUint32(30, true);
-  const sellOrderId = view.getUint32(34, true);
-
-  return {
-    success: true,
-    message: {
-      type: OutputMessageType.TRADE,
-      symbol,
-      price,
-      quantity,
-      buyOrderId,
-      sellOrderId,
-    },
+    bytesConsumed: REJECT_WIRE_SIZE,
     error: null,
   };
 }
 
 function decodeCancelAck(view: DataView): DecodeResult {
-  const symbol = readSymbol(view, OFFSET_SYMBOL);
-  if (!isValidSymbol(symbol)) {
-    return { success: false, message: null, error: 'CANCEL_ACK: invalid symbol' };
-  }
+  let pos = HEADER_SIZE;
 
-  const userOrderId = view.getUint32(OFFSET_USER_ORDER_ID, true);
+  const symbol = readSymbol(view, pos);
+  pos += SYMBOL_SIZE;
+
+  const userId = readU32Big(view, pos);
+  pos += 4;
+
+  const userOrderId = readU32Big(view, pos);
+  pos += 4;
 
   return {
     success: true,
@@ -300,65 +365,98 @@ function decodeCancelAck(view: DataView): DecodeResult {
       symbol,
       userOrderId,
     },
+    bytesConsumed: CANCEL_ACK_WIRE_SIZE,
     error: null,
   };
 }
 
 function decodeTopOfBook(view: DataView): DecodeResult {
-  const symbol = readSymbol(view, OFFSET_SYMBOL);
-  if (!isValidSymbol(symbol)) {
-    return { success: false, message: null, error: 'TOB: invalid symbol' };
+  let pos = HEADER_SIZE;
+
+  const symbol = readSymbol(view, pos);
+  pos += SYMBOL_SIZE;
+
+  const sideByte = view.getUint8(pos);
+  pos += 1;
+
+  const side = wireToSide(sideByte);
+  if (side === null) {
+    return { success: false, message: null, bytesConsumed: 0, error: 'Invalid side' };
   }
 
-  const scaledBidPrice = Number(view.getBigUint64(OFFSET_PRICE, true));
-  const bidPrice = scaledBidPrice / PRICE_SCALE;
+  const priceRaw = readU32Big(view, pos);
+  pos += 4;
 
-  const bidQuantity = view.getUint32(OFFSET_QUANTITY, true);
+  const quantity = readU32Big(view, pos);
+  pos += 4;
 
-  // Ask data packed after bid data
-  const scaledAskPrice = Number(view.getBigUint64(30, true));
-  const askPrice = scaledAskPrice / PRICE_SCALE;
-  const askQuantity = view.getUint32(38, true);
+  // Note: TopOfBook in Zig only has one side at a time
+  // We'll need to track bid/ask separately in the UI
+  const isBid = side === Side.BUY;
 
   return {
     success: true,
     message: {
       type: OutputMessageType.TOP_OF_BOOK,
       symbol,
-      bidPrice,
-      askPrice,
-      bidQuantity,
-      askQuantity,
+      bidPrice: isBid ? priceRaw / 100 : 0,
+      askPrice: isBid ? 0 : priceRaw / 100,
+      bidQuantity: isBid ? quantity : 0,
+      askQuantity: isBid ? 0 : quantity,
     },
+    bytesConsumed: TOP_OF_BOOK_WIRE_SIZE,
     error: null,
   };
 }
 
 export function decode(data: Uint8Array): DecodeResult {
-  if (data.length < BINARY_MESSAGE_SIZE) {
-    return { success: false, message: null, error: 'Message too short' };
+  if (data.length < HEADER_SIZE) {
+    return { success: false, message: null, bytesConsumed: 0, error: 'Message too short' };
   }
 
-  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-  const msgType = view.getUint8(OFFSET_MSG_TYPE);
+  if (data[0] !== MAGIC) {
+    return { success: false, message: null, bytesConsumed: 0, error: 'Invalid magic byte' };
+  }
 
-  if (msgType === OUTPUT_MSG_TYPE_ACK) {
+  const msgType = data[1];
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+
+  if (msgType === MSG_ACK) {
+    if (data.length < ACK_WIRE_SIZE) {
+      return { success: false, message: null, bytesConsumed: 0, error: 'Incomplete ACK' };
+    }
     return decodeAck(view);
   }
-  if (msgType === OUTPUT_MSG_TYPE_REJECT) {
-    return decodeReject(view);
-  }
-  if (msgType === OUTPUT_MSG_TYPE_TRADE) {
+
+  if (msgType === MSG_TRADE) {
+    if (data.length < TRADE_WIRE_SIZE) {
+      return { success: false, message: null, bytesConsumed: 0, error: 'Incomplete TRADE' };
+    }
     return decodeTrade(view);
   }
-  if (msgType === OUTPUT_MSG_TYPE_CANCEL_ACK) {
+
+  if (msgType === MSG_REJECT) {
+    if (data.length < REJECT_WIRE_SIZE) {
+      return { success: false, message: null, bytesConsumed: 0, error: 'Incomplete REJECT' };
+    }
+    return decodeReject(view);
+  }
+
+  if (msgType === MSG_CANCEL_ACK) {
+    if (data.length < CANCEL_ACK_WIRE_SIZE) {
+      return { success: false, message: null, bytesConsumed: 0, error: 'Incomplete CANCEL_ACK' };
+    }
     return decodeCancelAck(view);
   }
-  if (msgType === OUTPUT_MSG_TYPE_TOP_OF_BOOK) {
+
+  if (msgType === MSG_TOP_OF_BOOK) {
+    if (data.length < TOP_OF_BOOK_WIRE_SIZE) {
+      return { success: false, message: null, bytesConsumed: 0, error: 'Incomplete TOP_OF_BOOK' };
+    }
     return decodeTopOfBook(view);
   }
 
-  return { success: false, message: null, error: `Unknown message type: 0x${msgType.toString(16)}` };
+  return { success: false, message: null, bytesConsumed: 0, error: `Unknown message type: 0x${msgType.toString(16)}` };
 }
 
 // ============================================================================
@@ -366,17 +464,20 @@ export function decode(data: Uint8Array): DecodeResult {
 // ============================================================================
 
 export function isBinaryMessage(firstByte: number): boolean {
-  // Binary input messages: 0x01, 0x02, 0x03
-  if (firstByte === BINARY_MSG_TYPE_NEW_ORDER) return true;
-  if (firstByte === BINARY_MSG_TYPE_CANCEL) return true;
-  if (firstByte === BINARY_MSG_TYPE_FLUSH) return true;
-
-  // Binary output messages: 0x10-0x14
-  if (firstByte === OUTPUT_MSG_TYPE_ACK) return true;
-  if (firstByte === OUTPUT_MSG_TYPE_REJECT) return true;
-  if (firstByte === OUTPUT_MSG_TYPE_TRADE) return true;
-  if (firstByte === OUTPUT_MSG_TYPE_CANCEL_ACK) return true;
-  if (firstByte === OUTPUT_MSG_TYPE_TOP_OF_BOOK) return true;
-
-  return false;
+  return firstByte === MAGIC;
 }
+
+// ============================================================================
+// Exports for wire sizes (useful for relay)
+// ============================================================================
+
+export const WIRE_SIZES = {
+  NEW_ORDER: NEW_ORDER_WIRE_SIZE,
+  CANCEL: CANCEL_WIRE_SIZE,
+  FLUSH: FLUSH_WIRE_SIZE,
+  ACK: ACK_WIRE_SIZE,
+  CANCEL_ACK: CANCEL_ACK_WIRE_SIZE,
+  TRADE: TRADE_WIRE_SIZE,
+  TOP_OF_BOOK: TOP_OF_BOOK_WIRE_SIZE,
+  REJECT: REJECT_WIRE_SIZE,
+} as const;
