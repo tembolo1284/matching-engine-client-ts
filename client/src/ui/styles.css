@@ -1,0 +1,636 @@
+/**
+ * Matching Engine Client Styles
+ *
+ * Dark theme optimized for trading UI.
+ * Uses CSS custom properties for theming.
+ */
+
+/* ============================================================================
+   CSS Variables
+   ============================================================================ */
+
+:root {
+  --color-bg-primary: #0d1117;
+  --color-bg-secondary: #161b22;
+  --color-bg-tertiary: #21262d;
+  --color-bg-hover: #30363d;
+
+  --color-border: #30363d;
+  --color-border-light: #21262d;
+
+  --color-text-primary: #e6edf3;
+  --color-text-secondary: #8b949e;
+  --color-text-muted: #6e7681;
+
+  --color-accent: #58a6ff;
+  --color-accent-hover: #79b8ff;
+
+  --color-buy: #3fb950;
+  --color-buy-bg: rgba(63, 185, 80, 0.15);
+  --color-sell: #f85149;
+  --color-sell-bg: rgba(248, 81, 73, 0.15);
+
+  --color-positive: #3fb950;
+  --color-negative: #f85149;
+  --color-neutral: #8b949e;
+
+  --color-status-connected: #3fb950;
+  --color-status-connecting: #d29922;
+  --color-status-disconnected: #8b949e;
+  --color-status-failed: #f85149;
+
+  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  --font-family-mono: 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 24px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.4);
+
+  --transition-fast: 100ms ease;
+  --transition-normal: 200ms ease;
+}
+
+/* ============================================================================
+   Reset & Base
+   ============================================================================ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ============================================================================
+   Layout
+   ============================================================================ */
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+#header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-md) var(--spacing-lg);
+  background-color: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.header-left h1 {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-lg);
+}
+
+#main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 300px 1fr 1fr;
+  grid-template-rows: auto 1fr 1fr;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  overflow: hidden;
+}
+
+#order-entry-section {
+  grid-column: 1;
+  grid-row: 1 / 2;
+}
+
+#market-data-section {
+  grid-column: 1;
+  grid-row: 2 / 4;
+}
+
+#positions-section {
+  grid-column: 2 / 4;
+  grid-row: 1;
+}
+
+#orders-section {
+  grid-column: 2;
+  grid-row: 2 / 4;
+}
+
+#trades-section {
+  grid-column: 3;
+  grid-row: 2 / 4;
+}
+
+#footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background-color: var(--color-bg-secondary);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.footer-left {
+  display: flex;
+  gap: var(--spacing-lg);
+}
+
+.footer-right {
+  color: var(--color-negative);
+}
+
+/* ============================================================================
+   Panel
+   ============================================================================ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.panel h2 {
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-secondary);
+  background-color: var(--color-bg-tertiary);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.panel > div {
+  flex: 1;
+  overflow: auto;
+}
+
+/* ============================================================================
+   Connection Status
+   ============================================================================ */
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-sm);
+}
+
+.connection-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--color-status-disconnected);
+}
+
+.conn-connected .connection-indicator {
+  background-color: var(--color-status-connected);
+}
+
+.conn-connecting .connection-indicator,
+.conn-reconnecting .connection-indicator {
+  background-color: var(--color-status-connecting);
+  animation: pulse 1s infinite;
+}
+
+.conn-failed .connection-indicator {
+  background-color: var(--color-status-failed);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ============================================================================
+   Codec Selector
+   ============================================================================ */
+
+.codec-selector {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-sm);
+}
+
+.codec-selector label {
+  color: var(--color-text-secondary);
+}
+
+.codec-selector select {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.codec-selector select:hover {
+  border-color: var(--color-accent);
+}
+
+/* ============================================================================
+   Order Entry
+   ============================================================================ */
+
+.order-entry {
+  padding: var(--spacing-md);
+}
+
+.order-entry-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.form-group label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.form-group input,
+.form-group select {
+  padding: var(--spacing-sm);
+  font-size: var(--font-size-md);
+  font-family: var(--font-family-mono);
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.form-group input:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.form-group input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.form-row {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.form-row .form-group {
+  flex: 1;
+}
+
+.order-buttons {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.order-buttons button {
+  flex: 1;
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.btn-buy {
+  color: white;
+  background-color: var(--color-buy);
+}
+
+.btn-buy:hover {
+  background-color: #2ea043;
+}
+
+.btn-buy:disabled {
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.btn-sell {
+  color: white;
+  background-color: var(--color-sell);
+}
+
+.btn-sell:hover {
+  background-color: #da3633;
+}
+
+.btn-sell:disabled {
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+/* ============================================================================
+   Tables
+   ============================================================================ */
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family-mono);
+}
+
+.data-table th {
+  position: sticky;
+  top: 0;
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-weight: 600;
+  text-align: left;
+  color: var(--color-text-secondary);
+  background-color: var(--color-bg-tertiary);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.data-table td {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.data-table tr:hover td {
+  background-color: var(--color-bg-hover);
+}
+
+.data-table .align-right {
+  text-align: right;
+}
+
+.data-table .align-center {
+  text-align: center;
+}
+
+.data-table .mono {
+  font-family: var(--font-family-mono);
+}
+
+/* ============================================================================
+   Side Classes
+   ============================================================================ */
+
+.side-buy {
+  color: var(--color-buy);
+}
+
+.side-sell {
+  color: var(--color-sell);
+}
+
+.side-neutral {
+  color: var(--color-neutral);
+}
+
+/* ============================================================================
+   P&L Classes
+   ============================================================================ */
+
+.pnl-positive {
+  color: var(--color-positive);
+}
+
+.pnl-negative {
+  color: var(--color-negative);
+}
+
+.pnl-neutral {
+  color: var(--color-neutral);
+}
+
+/* ============================================================================
+   Status Classes
+   ============================================================================ */
+
+.status-pending {
+  color: var(--color-text-muted);
+}
+
+.status-open {
+  color: var(--color-accent);
+}
+
+.status-partial {
+  color: #d29922;
+}
+
+.status-filled {
+  color: var(--color-positive);
+}
+
+.status-cancelled {
+  color: var(--color-text-muted);
+}
+
+.status-rejected {
+  color: var(--color-negative);
+}
+
+/* ============================================================================
+   Market Data
+   ============================================================================ */
+
+.market-data-list {
+  padding: var(--spacing-sm);
+}
+
+.market-data-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm);
+  background-color: var(--color-bg-tertiary);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--spacing-sm);
+}
+
+.market-data-item:last-child {
+  margin-bottom: 0;
+}
+
+.market-data-symbol {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.market-data-prices {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+}
+
+.market-data-bid {
+  color: var(--color-buy);
+}
+
+.market-data-ask {
+  color: var(--color-sell);
+}
+
+.market-data-qty {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+/* ============================================================================
+   Cancel Button
+   ============================================================================ */
+
+.btn-cancel {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  background-color: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.btn-cancel:hover {
+  color: var(--color-negative);
+  border-color: var(--color-negative);
+}
+
+/* ============================================================================
+   Empty State
+   ============================================================================ */
+
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* ============================================================================
+   Scrollbar
+   ============================================================================ */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-bg-hover);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* ============================================================================
+   Responsive
+   ============================================================================ */
+
+@media (max-width: 1200px) {
+  #main {
+    grid-template-columns: 280px 1fr;
+    grid-template-rows: auto auto 1fr 1fr;
+  }
+
+  #order-entry-section {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  #market-data-section {
+    grid-column: 1;
+    grid-row: 2 / 5;
+  }
+
+  #positions-section {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  #orders-section {
+    grid-column: 2;
+    grid-row: 2 / 3;
+  }
+
+  #trades-section {
+    grid-column: 2;
+    grid-row: 3 / 5;
+  }
+}
+
+@media (max-width: 768px) {
+  #main {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto auto auto;
+  }
+
+  #order-entry-section,
+  #market-data-section,
+  #positions-section,
+  #orders-section,
+  #trades-section {
+    grid-column: 1;
+  }
+
+  #order-entry-section { grid-row: 1; }
+  #positions-section { grid-row: 2; }
+  #market-data-section { grid-row: 3; }
+  #orders-section { grid-row: 4; }
+  #trades-section { grid-row: 5; }
+}

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Matching Engine Client</title>
+  <link rel="stylesheet" href="/src/ui/styles.css">
+</head>
+<body>
+  <div id="app">
+    <header id="header">
+      <div class="header-left">
+        <h1>Matching Engine</h1>
+      </div>
+      <div class="header-right">
+        <div id="connection-status"></div>
+        <div id="codec-selector"></div>
+      </div>
+    </header>
+
+    <main id="main">
+      <section id="order-entry-section" class="panel">
+        <h2>Order Entry</h2>
+        <div id="order-entry"></div>
+      </section>
+
+      <section id="positions-section" class="panel">
+        <h2>Positions</h2>
+        <div id="positions-table"></div>
+      </section>
+
+      <section id="orders-section" class="panel">
+        <h2>Working Orders</h2>
+        <div id="orders-table"></div>
+      </section>
+
+      <section id="trades-section" class="panel">
+        <h2>Trade History</h2>
+        <div id="trades-table"></div>
+      </section>
+
+      <section id="market-data-section" class="panel">
+        <h2>Market Data</h2>
+        <div id="market-data"></div>
+      </section>
+    </main>
+
+    <footer id="footer">
+      <div class="footer-left">
+        <span id="messages-sent">Sent: 0</span>
+        <span id="messages-received">Recv: 0</span>
+      </div>
+      <div class="footer-right">
+        <span id="last-error"></span>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
