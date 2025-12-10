@@ -184,7 +184,10 @@ function renderOrderEntry(): void {
     className: 'btn-buy',
     textContent: 'Buy',
   }, {
-    onClick: () => submitOrder(Side.BUY),
+    onClick: () => {
+        console.log('Buy button clicked!');
+        submitOrder(Side.BUY);
+    },
   });
 
   const sellBtn = createElement('button', {
