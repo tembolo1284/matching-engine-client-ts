@@ -3,9 +3,13 @@
  *
  * Handles:
  * - Connection lifecycle (connect, disconnect, reconnect)
- * - Binary/text message handling
- * - Length-prefixed framing (matching TCP server protocol)
+ * - Binary message handling
  * - Connection health monitoring
+ *
+ * FRAMING NOTE:
+ * WebSocket has built-in message framing, so we send/receive raw messages.
+ * The relay server handles TCP length-prefix framing when forwarding to the
+ * matching engine.
  *
  * @module transport/websocket-client
  */
@@ -19,8 +23,6 @@ const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;
 const HEALTH_CHECK_INTERVAL_MS = 5000;
 const CONNECTION_TIMEOUT_MS = 10000;
-const MAX_PENDING_MESSAGES = 1024;
-const LENGTH_PREFIX_SIZE = 4;
 
 // ============================================================================
 // Types
@@ -116,10 +118,6 @@ export function createWebSocketClient(
   let lastMessageTime = 0;
   let connectedAt: number | null = null;
   let latencyMs: number | null = null;
-  let lastPingTime: number | null = null;
-
-  // Receive buffer for handling fragmented messages
-  let receiveBuffer: Uint8Array = new Uint8Array(0);
 
   // Handlers
   let messageHandler: MessageHandler | null = null;
@@ -143,70 +141,6 @@ export function createWebSocketClient(
   function emitError(error: Error): void {
     if (errorHandler !== null) {
       errorHandler(error);
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Framing (length-prefixed messages)
-  // --------------------------------------------------------------------------
-
-  function frameMessage(data: Uint8Array): Uint8Array {
-    const framed = new Uint8Array(LENGTH_PREFIX_SIZE + data.length);
-    const view = new DataView(framed.buffer);
-    view.setUint32(0, data.length, true); // Little-endian length prefix
-    framed.set(data, LENGTH_PREFIX_SIZE);
-    return framed;
-  }
-
-  function processReceiveBuffer(): void {
-    // Bounded loop: MAX_PENDING_MESSAGES iterations max
-    let iterations = 0;
-
-    while (iterations < MAX_PENDING_MESSAGES) {
-      iterations += 1;
-
-      // Need at least length prefix
-      if (receiveBuffer.length < LENGTH_PREFIX_SIZE) {
-        break;
-      }
-
-      const view = new DataView(
-        receiveBuffer.buffer,
-        receiveBuffer.byteOffset,
-        receiveBuffer.byteLength
-      );
-      const messageLength = view.getUint32(0, true);
-
-      // Sanity check message length
-      if (messageLength > 1024 * 1024) {
-        emitError(new Error(`Invalid message length: ${messageLength}`));
-        receiveBuffer = new Uint8Array(0);
-        break;
-      }
-
-      const totalLength = LENGTH_PREFIX_SIZE + messageLength;
-
-      // Wait for complete message
-      if (receiveBuffer.length < totalLength) {
-        break;
-      }
-
-      // Extract message
-      const messageData = receiveBuffer.slice(
-        LENGTH_PREFIX_SIZE,
-        totalLength
-      );
-
-      // Update buffer (remove processed message)
-      receiveBuffer = receiveBuffer.slice(totalLength);
-
-      // Deliver message
-      messagesReceived += 1;
-      lastMessageTime = Date.now();
-
-      if (messageHandler !== null) {
-        messageHandler(messageData);
-      }
     }
   }
 
@@ -238,9 +172,6 @@ export function createWebSocketClient(
       if (socket === null || socket.readyState !== WebSocket.OPEN) {
         return;
       }
-
-      // Send ping and measure latency
-      lastPingTime = Date.now();
 
       // Note: Browser WebSocket doesn't expose ping/pong frames
       // We rely on WebSocket's built-in keepalive
@@ -277,13 +208,14 @@ export function createWebSocketClient(
   }
 
   function handleOpen(): void {
-    clearTimeout(connectionTimeoutId!);
-    connectionTimeoutId = null;
+    if (connectionTimeoutId !== null) {
+      clearTimeout(connectionTimeoutId);
+      connectionTimeoutId = null;
+    }
 
     setState(ConnectionState.CONNECTED);
     reconnectAttempts = 0;
     connectedAt = Date.now();
-    receiveBuffer = new Uint8Array(0);
 
     startHealthCheck();
   }
@@ -307,18 +239,17 @@ export function createWebSocketClient(
   }
 
   function handleMessage(event: MessageEvent): void {
-    // Handle binary data
+    // Handle binary data (ArrayBuffer)
     if (event.data instanceof ArrayBuffer) {
       const data = new Uint8Array(event.data);
       bytesReceived += data.length;
+      messagesReceived += 1;
+      lastMessageTime = Date.now();
 
-      // Append to receive buffer
-      const newBuffer = new Uint8Array(receiveBuffer.length + data.length);
-      newBuffer.set(receiveBuffer, 0);
-      newBuffer.set(data, receiveBuffer.length);
-      receiveBuffer = newBuffer;
-
-      processReceiveBuffer();
+      // Deliver raw message directly - no framing to parse
+      if (messageHandler !== null) {
+        messageHandler(data);
+      }
       return;
     }
 
@@ -327,13 +258,12 @@ export function createWebSocketClient(
       event.data.arrayBuffer().then((buffer) => {
         const data = new Uint8Array(buffer);
         bytesReceived += data.length;
+        messagesReceived += 1;
+        lastMessageTime = Date.now();
 
-        const newBuffer = new Uint8Array(receiveBuffer.length + data.length);
-        newBuffer.set(receiveBuffer, 0);
-        newBuffer.set(data, receiveBuffer.length);
-        receiveBuffer = newBuffer;
-
-        processReceiveBuffer();
+        if (messageHandler !== null) {
+          messageHandler(data);
+        }
       }).catch((err) => {
         emitError(new Error('Failed to read Blob data'));
       });
@@ -413,12 +343,12 @@ export function createWebSocketClient(
       return false;
     }
 
-    const framed = frameMessage(data);
-
     try {
-      socket.send(framed);
+      // Send raw message - WebSocket handles framing
+      // The relay will add TCP length prefix when forwarding
+      socket.send(data);
       messagesSent += 1;
-      bytesSent += framed.length;
+      bytesSent += data.length;
       return true;
     } catch (err) {
       emitError(new Error('Failed to send message'));

@@ -2,7 +2,11 @@
  * TCP Relay - WebSocket to TCP bridge.
  *
  * Bridges browser WebSocket connections to the Zig matching engine's
- * TCP server. Handles length-prefixed framing on both sides.
+ * TCP server. 
+ * 
+ * FRAMING:
+ * - WebSocket: No length prefix needed (WS has built-in message framing)
+ * - TCP: Uses 4-byte little-endian length prefix
  *
  * WebSocket clients connect to ws://host:port/orders
  * Relay forwards to TCP engine at configured host:port
@@ -21,7 +25,6 @@ import { createServer, IncomingMessage, Server } from 'http';
 const LENGTH_PREFIX_SIZE = 4;
 const MAX_MESSAGE_SIZE = 1024 * 1024; // 1MB sanity limit
 const MAX_CLIENTS = 256;
-const RECEIVE_BUFFER_SIZE = 65536;
 const TCP_CONNECT_TIMEOUT_MS = 5000;
 const TCP_RECONNECT_DELAY_MS = 1000;
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -48,7 +51,6 @@ export interface TcpRelayStats {
 interface ClientState {
   readonly id: number;
   readonly ws: WebSocket;
-  receiveBuffer: Buffer;
 }
 
 // ============================================================================
@@ -102,7 +104,7 @@ export function createTcpRelay(
   let bytesFromClients = 0;
   let bytesToClients = 0;
 
-  // TCP receive buffer
+  // TCP receive buffer for length-prefixed framing
   let tcpReceiveBuffer: Buffer = Buffer.alloc(0);
 
   // --------------------------------------------------------------------------
@@ -116,7 +118,6 @@ export function createTcpRelay(
         const client: ClientState = {
           id: clientIdCounter,
           ws,
-          receiveBuffer: Buffer.alloc(0),
         };
         clientIdCounter += 1;
         clients[i] = client;
@@ -146,6 +147,33 @@ export function createTcpRelay(
     return count;
   }
 
+  // --------------------------------------------------------------------------
+  // WebSocket -> TCP (add length prefix for TCP)
+  // --------------------------------------------------------------------------
+
+  function forwardToTcp(data: Buffer): void {
+    if (tcpSocket === null || !tcpConnected) {
+      console.warn('TCP not connected, dropping message');
+      return;
+    }
+
+    // Add length prefix for TCP framing (big-endian, matching Zig server)
+    const framed = Buffer.alloc(LENGTH_PREFIX_SIZE + data.length);
+    framed.writeUInt32BE(data.length, 0);
+    data.copy(framed, LENGTH_PREFIX_SIZE);
+
+    try {
+      tcpSocket.write(framed);
+      messagesRelayed += 1;
+    } catch (err) {
+      console.error('Failed to write to TCP:', err);
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // TCP -> WebSocket (strip length prefix, send raw to WS)
+  // --------------------------------------------------------------------------
+
   function broadcastToClients(data: Buffer): void {
     // Bounded loop
     for (let i = 0; i < MAX_CLIENTS; i += 1) {
@@ -159,68 +187,12 @@ export function createTcpRelay(
       }
 
       try {
-        // Frame the message for WebSocket client
-        const framed = frameMessage(data);
-        client.ws.send(framed);
-        bytesToClients += framed.length;
+        // Send raw message - WebSocket has its own framing
+        client.ws.send(data);
+        bytesToClients += data.length;
       } catch (err) {
         console.error(`Failed to send to client ${client.id}:`, err);
       }
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Framing
-  // --------------------------------------------------------------------------
-
-  function frameMessage(data: Buffer): Buffer {
-    const framed = Buffer.alloc(LENGTH_PREFIX_SIZE + data.length);
-    framed.writeUInt32LE(data.length, 0);
-    data.copy(framed, LENGTH_PREFIX_SIZE);
-    return framed;
-  }
-
-  function processClientBuffer(client: ClientState): void {
-    // Bounded loop: process up to 100 messages per call
-    let iterations = 0;
-    const maxIterations = 100;
-
-    while (iterations < maxIterations) {
-      iterations += 1;
-
-      // Need at least length prefix
-      if (client.receiveBuffer.length < LENGTH_PREFIX_SIZE) {
-        break;
-      }
-
-      const messageLength = client.receiveBuffer.readUInt32LE(0);
-
-      // Sanity check
-      if (messageLength > MAX_MESSAGE_SIZE) {
-        console.error(`Client ${client.id}: invalid message length ${messageLength}`);
-        client.receiveBuffer = Buffer.alloc(0);
-        break;
-      }
-
-      const totalLength = LENGTH_PREFIX_SIZE + messageLength;
-
-      // Wait for complete message
-      if (client.receiveBuffer.length < totalLength) {
-        break;
-      }
-
-      // Extract message
-      const messageData = client.receiveBuffer.subarray(
-        LENGTH_PREFIX_SIZE,
-        totalLength
-      );
-
-      // Update buffer
-      client.receiveBuffer = client.receiveBuffer.subarray(totalLength);
-
-      // Forward to TCP
-      forwardToTcp(messageData);
-      messagesRelayed += 1;
     }
   }
 
@@ -237,7 +209,7 @@ export function createTcpRelay(
         break;
       }
 
-      const messageLength = tcpReceiveBuffer.readUInt32LE(0);
+      const messageLength = tcpReceiveBuffer.readUInt32BE(0);
 
       // Sanity check
       if (messageLength > MAX_MESSAGE_SIZE) {
@@ -253,17 +225,16 @@ export function createTcpRelay(
         break;
       }
 
-      // Extract message (without length prefix for broadcast)
-      const messageData = tcpReceiveBuffer.subarray(
-        LENGTH_PREFIX_SIZE,
-        totalLength
+      // Extract message payload (without length prefix)
+      const messageData = Buffer.from(
+        tcpReceiveBuffer.subarray(LENGTH_PREFIX_SIZE, totalLength)
       );
 
       // Update buffer
       tcpReceiveBuffer = tcpReceiveBuffer.subarray(totalLength);
 
-      // Broadcast to all WebSocket clients
-      broadcastToClients(Buffer.from(messageData));
+      // Broadcast raw payload to all WebSocket clients
+      broadcastToClients(messageData);
       messagesRelayed += 1;
     }
   }
@@ -271,22 +242,6 @@ export function createTcpRelay(
   // --------------------------------------------------------------------------
   // TCP Connection
   // --------------------------------------------------------------------------
-
-  function forwardToTcp(data: Buffer): void {
-    if (tcpSocket === null || !tcpConnected) {
-      console.warn('TCP not connected, dropping message');
-      return;
-    }
-
-    // Send with length prefix
-    const framed = frameMessage(data);
-
-    try {
-      tcpSocket.write(framed);
-    } catch (err) {
-      console.error('Failed to write to TCP:', err);
-    }
-  }
 
   function connectTcp(): void {
     if (tcpSocket !== null) {
@@ -386,10 +341,10 @@ export function createTcpRelay(
 
     ws.on('message', (data: Buffer) => {
       bytesFromClients += data.length;
-
-      // Append to client's receive buffer
-      client.receiveBuffer = Buffer.concat([client.receiveBuffer, data]);
-      processClientBuffer(client);
+      
+      // WebSocket messages are already complete - forward directly to TCP
+      // The forwardToTcp function adds the length prefix for the Zig server
+      forwardToTcp(data);
     });
 
     ws.on('close', () => {
