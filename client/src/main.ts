@@ -46,7 +46,7 @@ const CONFIG = {
   host: 'localhost',
   ordersPort: 9080,
   marketDataPort: 9082,
-  defaultCodec: Codec.CSV,
+  defaultCodec: Codec.BINARY,
 };
 
 // ============================================================================
@@ -676,6 +676,13 @@ function init(): void {
 
   // Connect
   orderManager.connect();
+
+  // Expose for debugging
+  (window as any).store = store;
+  (window as any).orderManager = orderManager;
+  (window as any).Side = Side;
+  (window as any).Codec = Codec;
+  console.log('App initialized, orderManager exposed to window');
 }
 
 // ============================================================================

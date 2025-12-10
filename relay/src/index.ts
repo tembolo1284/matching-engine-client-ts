@@ -42,11 +42,11 @@ async function main(): Promise<void> {
   // Parse configuration from environment
   const tcpRelayWsPort = getEnvInt('RELAY_WS_PORT', 9080);
   const tcpHost = getEnvString('ME_TCP_HOST', 'localhost');
-  const tcpPort = getEnvInt('ME_TCP_PORT', 8080);
+  const tcpPort = getEnvInt('ME_TCP_PORT', 1234);
 
   const multicastRelayWsPort = getEnvInt('RELAY_MCAST_WS_PORT', 9082);
   const multicastGroup = getEnvString('ME_MCAST_GROUP', '239.0.0.1');
-  const multicastPort = getEnvInt('ME_MCAST_PORT', 8082);
+  const multicastPort = getEnvInt('ME_MCAST_PORT', 1236);
 
   // Create relays
   const tcpRelay: TcpRelay = createTcpRelay({
