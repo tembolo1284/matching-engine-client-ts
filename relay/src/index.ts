@@ -45,7 +45,7 @@ async function main(): Promise<void> {
   const tcpPort = getEnvInt('ME_TCP_PORT', 1234);
 
   const multicastRelayWsPort = getEnvInt('RELAY_MCAST_WS_PORT', 9082);
-  const multicastGroup = getEnvString('ME_MCAST_GROUP', '239.0.0.1');
+  const multicastGroup = getEnvString('ME_MCAST_GROUP', '239.255.0.1');
   const multicastPort = getEnvInt('ME_MCAST_PORT', 1236);
 
   // Create relays
