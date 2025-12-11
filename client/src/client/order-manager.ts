@@ -230,12 +230,11 @@ export function createOrderManager(
 
     const userId = store.getUserId();
 
-    // Determine if we're the buyer or seller
-    const buyOrder = store.getOrder(userId, msg.buyOrderId);
-    const sellOrder = store.getOrder(userId, msg.sellOrderId);
+    // Check if we're the buyer (compare userIds, not just look up orders)
+    if (msg.buyUserId === userId) {
+      const buyOrder = store.getOrder(userId, msg.buyOrderId);
 
-    // Add trade record
-    if (buyOrder !== null) {
+      // Add trade record for our buy
       store.addTrade({
         symbol: msg.symbol,
         price: msg.price,
@@ -245,18 +244,24 @@ export function createOrderManager(
         timestamp: Date.now(),
       });
 
-      // Update position
+      // Update position (we bought, so positive)
       store.updatePosition(msg.symbol, Side.BUY, msg.price, msg.quantity);
 
-      // Update order filled quantity
-      const newFilled = buyOrder.filledQuantity + msg.quantity;
-      const status = newFilled >= buyOrder.quantity
-        ? OrderStatus.FILLED
-        : OrderStatus.PARTIAL;
-      store.updateOrderStatus(userId, msg.buyOrderId, status, newFilled);
+      // Update order filled quantity if we have the order
+      if (buyOrder !== null) {
+        const newFilled = buyOrder.filledQuantity + msg.quantity;
+        const status = newFilled >= buyOrder.quantity
+          ? OrderStatus.FILLED
+          : OrderStatus.PARTIAL;
+        store.updateOrderStatus(userId, msg.buyOrderId, status, newFilled);
+      }
     }
 
-    if (sellOrder !== null) {
+    // Check if we're the seller (compare userIds, not just look up orders)
+    if (msg.sellUserId === userId) {
+      const sellOrder = store.getOrder(userId, msg.sellOrderId);
+
+      // Add trade record for our sell
       store.addTrade({
         symbol: msg.symbol,
         price: msg.price,
@@ -266,15 +271,17 @@ export function createOrderManager(
         timestamp: Date.now(),
       });
 
-      // Update position
+      // Update position (we sold, so negative)
       store.updatePosition(msg.symbol, Side.SELL, msg.price, msg.quantity);
 
-      // Update order filled quantity
-      const newFilled = sellOrder.filledQuantity + msg.quantity;
-      const status = newFilled >= sellOrder.quantity
-        ? OrderStatus.FILLED
-        : OrderStatus.PARTIAL;
-      store.updateOrderStatus(userId, msg.sellOrderId, status, newFilled);
+      // Update order filled quantity if we have the order
+      if (sellOrder !== null) {
+        const newFilled = sellOrder.filledQuantity + msg.quantity;
+        const status = newFilled >= sellOrder.quantity
+          ? OrderStatus.FILLED
+          : OrderStatus.PARTIAL;
+        store.updateOrderStatus(userId, msg.sellOrderId, status, newFilled);
+      }
     }
   }
 

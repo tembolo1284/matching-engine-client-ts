@@ -130,7 +130,9 @@ export interface TradeOutput {
   readonly symbol: string;
   readonly price: number;
   readonly quantity: number;
+  readonly buyUserId: number;
   readonly buyOrderId: number;
+  readonly sellUserId: number;
   readonly sellOrderId: number;
 }
 
